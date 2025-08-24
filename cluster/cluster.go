@@ -54,7 +54,7 @@ func NewCluster(cfg *config.Config, logger *logger.Logger) (*Cluster, error) {
 	tokenMgr := token.NewTokenManager(cfg.Cluster.ID, cfg.Cluster.Secret, serverURL)
 
 	// 创建同步管理器
-	syncMgr := sync.NewSyncManager(store, tokenMgr, logger)
+	syncMgr := sync.NewSyncManager(store, tokenMgr, logger, &cfg.Sync)
 
 	// 创建错误重试管理器
 	errorMgr := NewErrorRetryManager(5, logger)
@@ -113,7 +113,12 @@ func (c *Cluster) doRequest(method, path string, params map[string]string) (*htt
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		c.logger.Error("请求失败: %v", err)
-		c.logger.Error("请求详情 - 方法: %s, URL: %s, Headers: %v", method, req.URL.String(), req.Header)
+		// 对Authorization头进行脱敏处理
+		headers := req.Header.Clone()
+		if headers.Get("Authorization") != "" {
+			headers.Set("Authorization", "Bearer ***")
+		}
+		c.logger.Error("请求详情 - 方法: %s, URL: %s, Headers: %v", method, req.URL.String(), headers)
 		return nil, fmt.Errorf("请求失败: %w", err)
 	}
 
@@ -124,7 +129,12 @@ func (c *Cluster) doRequest(method, path string, params map[string]string) (*htt
 		resp.Body.Close()
 
 		c.logger.Error("请求返回错误状态码: %d", resp.StatusCode)
-		c.logger.Error("请求详情 - 方法: %s, URL: %s, Headers: %v", method, req.URL.String(), req.Header)
+		// 对Authorization头进行脱敏处理
+		headers := req.Header.Clone()
+		if headers.Get("Authorization") != "" {
+			headers.Set("Authorization", "Bearer ***")
+		}
+		c.logger.Error("请求详情 - 方法: %s, URL: %s, Headers: %v", method, req.URL.String(), headers)
 		c.logger.Error("响应详情 - Body: %s", string(body))
 
 		return nil, fmt.Errorf("请求返回错误状态码: %d, 响应内容: %s", resp.StatusCode, string(body))

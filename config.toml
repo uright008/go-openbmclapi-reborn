@@ -27,3 +27,11 @@ timezone = "Asia/Shanghai"
 [log]
 level = "info"
 format = "text"
+
+[sync]
+# 文件同步配置
+max_concurrency = 64
+# 最大并发下载数，0表示无限制
+
+start_interval_ms = 100
+# 文件下载启动间隔(毫秒)

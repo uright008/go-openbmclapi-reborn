@@ -118,7 +118,6 @@ func (tm *TokenManager) fetchToken() (string, error) {
 	if err := json.Unmarshal(tokenBody, &tokenRespData); err != nil {
 		return "", fmt.Errorf("无法解析令牌响应: %w", err)
 	}
-	println(tokenRespData.Token)
 	// 保存令牌
 	tm.mu.Lock()
 	tm.token = tokenRespData.Token

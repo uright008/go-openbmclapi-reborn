@@ -47,6 +47,12 @@ type LogConfig struct {
 	Format string `toml:"format"`
 }
 
+// SyncConfig 同步配置
+type SyncConfig struct {
+	MaxConcurrency  int `toml:"max_concurrency"`
+	StartIntervalMs int `toml:"start_interval_ms"`
+}
+
 // Config 主配置结构
 type Config struct {
 	Cluster  ClusterConfig  `toml:"cluster"`
@@ -55,6 +61,7 @@ type Config struct {
 	Features FeaturesConfig `toml:"features"`
 	System   SystemConfig   `toml:"system"`
 	Log      LogConfig      `toml:"log"`
+	Sync     SyncConfig     `toml:"sync"`
 }
 
 // Load 从文件加载配置，如果文件不存在则创建默认配置
@@ -120,6 +127,10 @@ func createDefaultConfig(filename string) error {
 			Level:  "info",
 			Format: "text",
 		},
+		Sync: SyncConfig{
+			MaxConcurrency:  64,
+			StartIntervalMs: 100,
+		},
 	}
 
 	// 将默认配置写入文件
@@ -160,5 +171,14 @@ func setDefaults(config *Config) {
 
 	if config.Log.Format == "" {
 		config.Log.Format = "text"
+	}
+
+	// 设置同步配置默认值
+	if config.Sync.MaxConcurrency <= 0 {
+		config.Sync.MaxConcurrency = 64
+	}
+
+	if config.Sync.StartIntervalMs <= 0 {
+		config.Sync.StartIntervalMs = 100
 	}
 }

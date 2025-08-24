@@ -5,10 +5,12 @@ import (
 	"io"
 	"net/http"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/klauspost/compress/zstd"
 	"github.com/linkedin/goavro/v2"
+	"github.com/uright008/go-openbmclapi-reborn/config"
 	"github.com/uright008/go-openbmclapi-reborn/logger"
 	"github.com/uright008/go-openbmclapi-reborn/storage"
 	"github.com/uright008/go-openbmclapi-reborn/token"
@@ -35,10 +37,11 @@ type SyncManager struct {
 	serverURL string
 	logger    *logger.Logger
 	errorMgr  *ErrorRetryManager
+	config    *config.SyncConfig
 }
 
 // NewSyncManager 创建新的同步管理器
-func NewSyncManager(storage storage.Storage, tokenMgr *token.TokenManager, logger *logger.Logger) *SyncManager {
+func NewSyncManager(storage storage.Storage, tokenMgr *token.TokenManager, logger *logger.Logger, syncConfig *config.SyncConfig) *SyncManager {
 	return &SyncManager{
 		storage:   storage,
 		tokenMgr:  tokenMgr,
@@ -46,6 +49,7 @@ func NewSyncManager(storage storage.Storage, tokenMgr *token.TokenManager, logge
 		serverURL: "https://openbmclapi.bangbang93.com",
 		logger:    logger,
 		errorMgr:  NewErrorRetryManager(5, logger),
+		config:    syncConfig,
 	}
 }
 
@@ -83,7 +87,12 @@ func (sm *SyncManager) doRequest(method, path string, params map[string]string) 
 	resp, err := sm.client.Do(req)
 	if err != nil {
 		sm.logger.Error("请求失败: %v", err)
-		sm.logger.Error("请求详情 - 方法: %s, URL: %s, Headers: %v", method, req.URL.String(), req.Header)
+		// 对Authorization头进行脱敏处理
+		headers := req.Header.Clone()
+		if headers.Get("Authorization") != "" {
+			headers.Set("Authorization", "Bearer ***")
+		}
+		sm.logger.Error("请求详情 - 方法: %s, URL: %s, Headers: %v", method, req.URL.String(), headers)
 		return nil, fmt.Errorf("请求失败: %w", err)
 	}
 
@@ -94,7 +103,12 @@ func (sm *SyncManager) doRequest(method, path string, params map[string]string) 
 		resp.Body.Close()
 
 		sm.logger.Error("请求返回错误状态码: %d", resp.StatusCode)
-		sm.logger.Error("请求详情 - 方法: %s, URL: %s, Headers: %v", method, req.URL.String(), req.Header)
+		// 对Authorization头进行脱敏处理
+		headers := req.Header.Clone()
+		if headers.Get("Authorization") != "" {
+			headers.Set("Authorization", "Bearer ***")
+		}
+		sm.logger.Error("请求详情 - 方法: %s, URL: %s, Headers: %v", method, req.URL.String(), headers)
 		sm.logger.Error("响应详情 - Body: %s", string(body))
 
 		return nil, fmt.Errorf("请求返回错误状态码: %d, 响应内容: %s", resp.StatusCode, string(body))
@@ -321,8 +335,18 @@ func (sm *SyncManager) SyncFiles() error {
 
 // downloadMissingFiles 下载缺失的文件，限制并发数和启动间隔
 func (sm *SyncManager) downloadMissingFiles(missingFiles []*storage.FileInfo) int {
-	const maxConcurrent = 64  // 最大并发数
-	const startInterval = 100 // 启动间隔(毫秒)
+	maxConcurrent := sm.config.MaxConcurrency
+	startInterval := sm.config.StartIntervalMs
+
+	// 如果最大并发数设置为0或负数，则使用默认值64
+	if maxConcurrent <= 0 {
+		maxConcurrent = 64
+	}
+
+	// 如果启动间隔设置为负数，则使用默认值100ms
+	if startInterval < 0 {
+		startInterval = 100
+	}
 
 	// 创建信号量控制并发数
 	semaphore := make(chan struct{}, maxConcurrent)
@@ -333,11 +357,18 @@ func (sm *SyncManager) downloadMissingFiles(missingFiles []*storage.FileInfo) in
 	// 创建等待组等待所有下载完成
 	var wg sync.WaitGroup
 
+	// 创建进度计数器
+	var downloadedCount int64
+	totalFiles := len(missingFiles)
+
+	// 显示初始进度信息
+	sm.logger.Info("文件总数: 0/%d", totalFiles)
+
 	// 下载每个缺失的文件
 	for i, file := range missingFiles {
 		// 控制启动间隔
 		if i > 0 {
-			time.Sleep(startInterval * time.Millisecond)
+			time.Sleep(time.Duration(startInterval) * time.Millisecond)
 		}
 
 		// 增加等待组计数
@@ -347,6 +378,12 @@ func (sm *SyncManager) downloadMissingFiles(missingFiles []*storage.FileInfo) in
 		go func(f *storage.FileInfo) {
 			// 释放信号量和等待组
 			defer func() {
+				// 增加已完成计数
+				current := atomic.AddInt64(&downloadedCount, 1)
+
+				// 更新总进度（使用\r实现原地更新）
+				sm.logger.Info("\r文件总数: %d/%d", current, totalFiles)
+
 				<-semaphore
 				wg.Done()
 			}()
@@ -364,6 +401,9 @@ func (sm *SyncManager) downloadMissingFiles(missingFiles []*storage.FileInfo) in
 	// 等待所有下载完成
 	wg.Wait()
 
+	// 确保进度显示最终状态
+	sm.logger.Info("\r文件总数: %d/%d", totalFiles, totalFiles)
+
 	// 关闭错误通道
 	close(errChan)
 
@@ -372,6 +412,10 @@ func (sm *SyncManager) downloadMissingFiles(missingFiles []*storage.FileInfo) in
 	for range errChan {
 		failedCount++
 	}
+
+	// 显示最终结果
+	sm.logger.Info("\n文件下载完成: 成功 %d, 失败 %d, 总计 %d",
+		totalFiles-failedCount, failedCount, totalFiles)
 
 	return failedCount
 }
