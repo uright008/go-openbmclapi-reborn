@@ -100,9 +100,14 @@ func (sm *SyncManager) doRequest(method, path string, params map[string]string) 
 
 	// 检查响应状态
 	if resp.StatusCode >= 400 {
+		// 确保响应体被正确关闭
+		defer resp.Body.Close()
+
 		// 读取响应体以便记录错误详情
-		body, _ := io.ReadAll(resp.Body)
-		resp.Body.Close()
+		body, readErr := io.ReadAll(resp.Body)
+		if readErr != nil {
+			sm.logger.Error("读取错误响应体失败: %v", readErr)
+		}
 
 		sm.logger.Error("请求返回错误状态码: %d", resp.StatusCode)
 		// 对Authorization头进行脱敏处理
@@ -125,7 +130,7 @@ func decompress(data []byte) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("创建zstd解压器失败: %w", err)
 	}
-	defer reader.Close()
+	defer reader.Close() // 确保在函数退出时关闭解压器
 
 	decompressed, err := reader.DecodeAll(data, nil)
 	if err != nil {
@@ -155,7 +160,12 @@ func (sm *SyncManager) GetFileList() ([]*File, error) {
 		sm.errorMgr.RecordError(fmt.Errorf("无法获取文件列表: %w", err))
 		return nil, fmt.Errorf("无法获取文件列表: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() {
+		// 确保响应体在函数结束时被关闭
+		if resp != nil && resp.Body != nil {
+			resp.Body.Close()
+		}
+	}()
 
 	// 处理NO_CONTENT状态码 (204) - 表示没有文件需要同步
 	if resp.StatusCode == http.StatusNoContent {
@@ -423,9 +433,13 @@ func (sm *SyncManager) syncFiles(missingFiles []*storage.FileInfo) int {
 
 				// 计算并显示进度
 				progress := float64(current) / float64(totalFiles) * 100
-				sm.logger.Info("\r同步进度: %d/%d (%.2f%%)\n", current, totalFiles, progress)
+				sm.logger.Info("同步进度: %d/%d (%.2f%%)", current, totalFiles, progress)
 
-				<-semaphore
+				// 确保从信号量中释放资源
+				select {
+				case <-semaphore:
+				default:
+				}
 				wg.Done()
 			}()
 
@@ -440,7 +454,6 @@ func (sm *SyncManager) syncFiles(missingFiles []*storage.FileInfo) int {
 	}
 
 	// 等待所有下载完成
-	wg.Wait()
 
 	// 关闭错误通道
 	close(errChan)
@@ -450,6 +463,9 @@ func (sm *SyncManager) syncFiles(missingFiles []*storage.FileInfo) int {
 	for range errChan {
 		failedCount++
 	}
+
+	// 清理信号量
+	close(semaphore)
 
 	return failedCount
 }
@@ -486,7 +502,13 @@ func (sm *SyncManager) downloadFile(file *storage.FileInfo) error {
 		sm.errorMgr.RecordError(fmt.Errorf("无法下载文件 %s: %w", file.Hash, err))
 		return fmt.Errorf("无法下载文件 %s: %w", file.Hash, err)
 	}
-	defer resp.Body.Close()
+
+	// 确保响应体在函数结束时被关闭
+	defer func() {
+		if resp != nil && resp.Body != nil {
+			resp.Body.Close()
+		}
+	}()
 
 	// 保存文件
 	if err := sm.storage.Put(file.Hash, resp.Body); err != nil {
