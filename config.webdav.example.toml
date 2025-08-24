@@ -1,0 +1,51 @@
+# OpenBMCLAPI Cluster Configuration (WebDAV Storage Example)
+# This is an example configuration file for using WebDAV storage
+
+[cluster]
+# Cluster credentials (required)
+id = "your-cluster-id"
+secret = "your-cluster-secret"
+
+# Cluster IP and ports
+ip = ""                    # Public IP address (auto-detect if empty)
+port = 4000               # Local port to listen on
+public_port = 0           # Public port (defaults to local port if 0)
+
+# Bring your own certificate
+byoc = false
+
+[storage]
+# Storage configuration
+type = "webdav"
+path = "./cache"
+
+# WebDAV storage configuration
+[storage.webdav]
+endpoint = "https://webdav.example.com/remote.php/webdav/"
+username = "your-username"
+password = "your-password"
+
+[security]
+# SSL configuration (optional)
+ssl_key = ""
+ssl_cert = ""
+
+[features]
+# Feature flags
+enable_nginx = false
+disable_access_log = false
+enable_upnp = false
+
+[system]
+# System configuration
+timezone = "Asia/Shanghai"
+
+[log]
+# Log configuration
+level = "info"
+format = "text"
+
+[sync]
+# Sync configuration
+max_concurrency = 64
+start_interval_ms = 100

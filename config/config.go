@@ -19,8 +19,17 @@ type ClusterConfig struct {
 
 // StorageConfig 存储配置
 type StorageConfig struct {
-	Type string `toml:"type"`
-	Path string `toml:"path"`
+	Type   string       `toml:"type"`
+	Path   string       `toml:"path"`
+	WebDAV WebDAVConfig `toml:"webdav"`
+}
+
+// WebDAVConfig WebDAV配置
+type WebDAVConfig struct {
+	Endpoint string `toml:"endpoint"`
+	Username string `toml:"username"`
+	Password string `toml:"password"`
+	Path     string `toml:"path"`
 }
 
 // SecurityConfig 安全配置
@@ -110,6 +119,12 @@ func createDefaultConfig(filename string) error {
 		Storage: StorageConfig{
 			Type: "file",
 			Path: "./cache",
+			WebDAV: WebDAVConfig{
+				// 示例配置，根据实际情况修改
+				Endpoint: "https://example.com/webdav", // WebDAV服务器地址
+				Username: "username",                   // WebDAV用户名
+				Password: "password",                   // WebDAV密码
+			},
 		},
 		Security: SecurityConfig{
 			SSLKey:  "",
@@ -159,6 +174,11 @@ func setDefaults(config *Config) {
 
 	if config.Storage.Path == "" {
 		config.Storage.Path = "./cache"
+	}
+
+	if config.Storage.WebDAV.Endpoint == "" {
+		// 如果没有设置WebDAV端点，则使用集群ID作为默认值
+		config.Storage.WebDAV.Endpoint = fmt.Sprintf("https://%s.openbmclapi.com/webdav", config.Cluster.ID)
 	}
 
 	if config.System.Timezone == "" {

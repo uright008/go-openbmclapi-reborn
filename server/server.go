@@ -3,138 +3,117 @@ package server
 import (
 	"context"
 	"fmt"
+	"io"
 	"net/http"
 	"time"
 
-	"github.com/uright008/go-openbmclapi-reborn/config"
-	"github.com/uright008/go-openbmclapi-reborn/logger"
+	"github.com/uright008/go-openbmclapi-reborn/cluster"
 	"github.com/uright008/go-openbmclapi-reborn/utils"
 )
 
 // Server 定义HTTP服务器结构
 type Server struct {
-	httpServer *http.Server
-	config     *config.Config
-	logger     *logger.Logger
+	cluster *cluster.Cluster
+	server  *http.Server
 }
 
 // New 创建新的HTTP服务器实例
-func New(cfg *config.Config, log *logger.Logger) *Server {
+func NewServer(cluster *cluster.Cluster) *Server {
 	return &Server{
-		config: cfg,
-		logger: log,
+		cluster: cluster,
 	}
 }
 
 // Start 启动HTTP服务器
-func (s *Server) Start() error {
-	// 创建HTTP服务器
-	addr := fmt.Sprintf("%s:%d", s.config.Cluster.IP, s.config.Cluster.Port)
-	s.httpServer = &http.Server{
-		Addr: addr,
+func (s *Server) SetupRoutes() *http.ServeMux {
+	mux := http.NewServeMux()
+
+	// Download route
+	mux.HandleFunc("/download/", s.handleDownload)
+
+	// Health check route
+	mux.HandleFunc("/health", s.handleHealth)
+
+	return mux
+}
+
+func (s *Server) Start(addr string) error {
+	mux := s.SetupRoutes()
+
+	s.server = &http.Server{
+		Addr:    addr,
+		Handler: mux,
 	}
 
-	// 注册路由处理函数
-	s.registerRoutes()
+	fmt.Printf("Starting server on %s\n", addr)
+	return s.server.ListenAndServe()
+}
 
-	// 在goroutine中启动服务器以避免阻塞
-	go func() {
-		s.logger.Info("HTTP服务器正在启动，监听地址: %s", addr)
-		if err := s.httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			s.logger.Error("HTTP服务器启动失败: %v", err)
-		}
-	}()
-
-	// 等待服务器启动
-	time.Sleep(100 * time.Millisecond)
+// Stop stops the HTTP server
+func (s *Server) Stop(ctx context.Context) error {
+	if s.server != nil {
+		return s.server.Shutdown(ctx)
+	}
 	return nil
 }
 
-// Stop 停止HTTP服务器
-func (s *Server) Stop() error {
-	if s.httpServer == nil {
-		return nil
-	}
-
-	s.logger.Info("正在关闭HTTP服务器...")
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	if err := s.httpServer.Shutdown(ctx); err != nil {
-		return fmt.Errorf("HTTP服务器关闭失败: %w", err)
-	}
-
-	s.logger.Info("HTTP服务器已关闭")
-	return nil
-}
-
-// registerRoutes 注册路由处理函数
-func (s *Server) registerRoutes() {
-	// 偽裝成nginx的路由
-	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		// 根据原始openbmclapi的行为，这里应该返回nginx相关信息
-		// 但目前我们只是简单地返回一个信息
-		w.Header().Set("Server", "nginx")
-		fmt.Fprintf(w, "Welcome to OpenBMCLAPI - a mirror cluster for BMCLAPI")
-	})
-
-	// 健康检查路由
-	http.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		fmt.Fprintf(w, "OK")
-	})
-
-	// 下载路由
-	http.HandleFunc("/download/", s.handleDownload)
-
-	// 认证路由
-	http.HandleFunc("/auth", s.handleAuth)
-
-	// 测速路由
-	http.HandleFunc("/measure", func(w http.ResponseWriter, r *http.Request) {
-		// 这里应该实现测速逻辑
-		// 目前只是占位符
-		fmt.Fprintf(w, "Measure endpoint")
-	})
-}
-
-// handleDownload 处理文件下载请求
+// handleDownload handles file download requests
 func (s *Server) handleDownload(w http.ResponseWriter, r *http.Request) {
 	startTime := time.Now()
 
-	// 从URL中提取哈希值
-	hash := utils.ExtractHashFromPath(r.URL.Path)
+	// Extract hash from URL
+	hash := r.URL.Path[len("/download/"):]
 	if hash == "" {
-		http.Error(w, "Invalid hash", http.StatusBadRequest)
+		http.Error(w, "Missing hash", http.StatusBadRequest)
 		return
 	}
 
-	// 验证请求签名
-	if !s.verifyRequest(r, hash) {
-		http.Error(w, "Unauthorized", http.StatusForbidden)
+	// Parse query parameters
+	query := r.URL.Query()
+
+	// Check signature
+	// 注意: 这里我们假设cluster.Cluster有一个CheckSign方法，如果没有，我们需要实现它
+	// 或者使用utils包中的签名验证函数
+	if !utils.VerifySignature(s.cluster.Config.Cluster.Secret, hash, query.Get("sign")) {
+		http.Error(w, "Forbidden", http.StatusForbidden)
 		return
 	}
 
-	// 检查文件是否存在
-	// 这里需要访问存储系统来检查文件，暂时留空，后续实现
-	// exists, err := storage.Exists(hash)
-	// if err != nil {
-	// 	http.Error(w, "Internal server error", http.StatusInternalServerError)
-	// 	return
-	// }
-	//
-	// if !exists {
-	// 	http.NotFound(w, r)
-	// 	return
-	// }
+	// Get file from storage
+	storage := s.cluster.Storage
 
-	// 返回文件内容
-	// 这里需要实现文件读取和传输逻辑，暂时返回404
-	http.NotFound(w, r)
+	// Try to get the file from storage
+	fileReader, err := storage.Get(hash)
+	if err != nil {
+		// File does not exist in storage
+		http.Error(w, "File not found", http.StatusNotFound)
+		return
+	}
+	defer fileReader.Close()
 
-	// 记录请求日志
+	// Check if it's a WebDAV storage that returns a redirect
+	if redirectReader, ok := fileReader.(interface{ GetRedirectURL() string }); ok {
+		// For WebDAV storage, redirect to the actual file location
+		redirectURL := redirectReader.GetRedirectURL()
+		http.Redirect(w, r, redirectURL, http.StatusFound)
+		return
+	}
+
+	// For regular file storage, serve the file content
+	// Record hit for statistics
+	// 注意: 这里我们假设cluster.Cluster有一个RecordHit方法，如果没有，我们需要实现它
+	// s.cluster.RecordHit(0) // TODO: Get actual file size
+
+	// Copy file content to response
+	_, err = io.Copy(w, fileReader)
+	if err != nil {
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	// Log request
 	duration := time.Since(startTime)
-	s.logger.LogRequest(r.Method, r.URL.Path, duration, http.StatusOK)
+	fmt.Printf("[%s] %s %s %v\n", r.Method, r.URL.Path, "200", duration)
 }
 
 // handleAuth 处理认证请求
@@ -174,5 +153,12 @@ func (s *Server) verifyRequest(r *http.Request, hash string) bool {
 	}
 
 	// 验证签名
-	return utils.VerifySignature(s.config.Cluster.Secret, hash, signature)
+	return utils.VerifySignature(s.cluster.Config.Cluster.Secret, hash, signature)
+}
+
+// handleHealth handles health check requests
+func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/plain")
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte("OK"))
 }

@@ -336,6 +336,7 @@ func convertBytesToFiles(data []byte) ([]*File, error) {
 // SyncFiles 同步文件
 func (sm *SyncManager) SyncFiles() error {
 	// 检查存储状态
+
 	ready, err := sm.storage.Check()
 	if err != nil {
 		return fmt.Errorf("存储检查失败: %w", err)
@@ -361,7 +362,9 @@ func (sm *SyncManager) SyncFiles() error {
 	storageFiles := convertFiles(files)
 
 	// 获取缺失的文件
+
 	missingFiles, err := sm.storage.GetMissingFiles(storageFiles)
+
 	if err != nil {
 		return fmt.Errorf("无法检查缺失的文件: %w", err)
 	}
