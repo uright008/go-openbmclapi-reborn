@@ -1,0 +1,29 @@
+# OpenBMCLAPI 配置文件
+
+[cluster]
+id = ""
+secret = ""
+ip = ""
+port = 4000
+public_port = 0
+byoc = false
+
+[storage]
+type = "file"
+path = "./cache"
+
+[security]
+ssl_key = ""
+ssl_cert = ""
+
+[features]
+enable_nginx = false
+disable_access_log = false
+enable_upnp = false
+
+[system]
+timezone = "Asia/Shanghai"
+
+[log]
+level = "info"
+format = "text"
