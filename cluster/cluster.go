@@ -15,7 +15,7 @@ import (
 
 const (
 	// 版本号，用于User-Agent
-	version = "1.0.0"
+	version = "1.14.0"
 )
 
 // Cluster 结构体定义

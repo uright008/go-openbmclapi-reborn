@@ -1,9 +1,11 @@
 package sync
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -182,6 +184,9 @@ func (sm *SyncManager) GetFileList() ([]*File, error) {
 		return nil, fmt.Errorf("解压响应数据失败: %w", err)
 	}
 
+	// 将解压后的数据写入本地文件以便调试
+	sm.saveDecompressedData(decompressed)
+
 	// 将解压后的数据转换为文件列表
 	files, err := convertBytesToFiles(decompressed)
 	if err != nil {
@@ -189,9 +194,61 @@ func (sm *SyncManager) GetFileList() ([]*File, error) {
 		return nil, fmt.Errorf("解析文件列表失败: %w", err)
 	}
 
+	// 将文件列表写入JSON文件以便查看
+	sm.saveFileListAsJSON(files)
+
 	// 操作成功，重置错误计数
 	sm.errorMgr.ResetErrors()
 	return files, nil
+}
+
+// saveDecompressedData 将解压后的数据保存到本地文件
+func (sm *SyncManager) saveDecompressedData(data []byte) {
+	filename := "filelist_decompressed.dat"
+	err := os.WriteFile(filename, data, 0644)
+	if err != nil {
+		sm.logger.Warn("无法将解压后的数据写入文件 %s: %v", filename, err)
+	} else {
+		sm.logger.Info("已将解压后的数据写入文件 %s", filename)
+	}
+}
+
+// saveFileListAsJSON 将文件列表保存为JSON格式
+func (sm *SyncManager) saveFileListAsJSON(files []*File) {
+	filename := "filelist.json"
+
+	// 转换为可JSON序列化的结构
+	type fileInfo struct {
+		Path  string `json:"path"`
+		Size  int64  `json:"size"`
+		Hash  string `json:"hash"`
+		MTime int64  `json:"mtime"`
+	}
+
+	var fileInfos []fileInfo
+	for _, file := range files {
+		fileInfos = append(fileInfos, fileInfo{
+			Path:  file.Path,
+			Size:  file.Size,
+			Hash:  file.Hash,
+			MTime: file.MTime,
+		})
+	}
+
+	// 序列化为JSON
+	data, err := json.MarshalIndent(fileInfos, "", "  ")
+	if err != nil {
+		sm.logger.Warn("无法将文件列表序列化为JSON: %v", err)
+		return
+	}
+
+	// 写入文件
+	err = os.WriteFile(filename, data, 0644)
+	if err != nil {
+		sm.logger.Warn("无法将文件列表写入JSON文件 %s: %v", filename, err)
+	} else {
+		sm.logger.Info("已将文件列表写入JSON文件 %s", filename)
+	}
 }
 
 // convertBytesToFiles 将解压后的字节数据转换为文件列表
@@ -268,73 +325,56 @@ func convertBytesToFiles(data []byte) ([]*File, error) {
 
 // SyncFiles 同步文件
 func (sm *SyncManager) SyncFiles() error {
-	var lastErr error
+	// 检查存储状态
+	ready, err := sm.storage.Check()
+	if err != nil {
+		return fmt.Errorf("存储检查失败: %w", err)
+	}
+	if !ready {
+		return fmt.Errorf("存储未就绪")
+	}
 
-	// 最多重试5次
-	for i := 0; i < 5; i++ {
-		// 获取文件列表
-		files, err := sm.GetFileList()
-		if err != nil {
-			lastErr = fmt.Errorf("无法获取文件列表: %w", err)
-			sm.logger.Error("获取文件列表失败 (%d/5): %v", i+1, err)
+	// 获取文件列表
+	files, err := sm.GetFileList()
+	if err != nil {
+		return fmt.Errorf("无法获取文件列表: %w", err)
+	}
 
-			// 等待一段时间再重试
-			if i < 4 { // 最后一次不需要等待
-				time.Sleep(time.Duration(i+1) * time.Second)
-			}
-			continue
-		}
-
-		// 检查是否没有文件需要同步
-		if len(files) == 0 {
-			sm.logger.Info("没有文件需要同步")
-			sm.errorMgr.ResetErrors()
-			return nil
-		}
-
-		// 转换文件格式
-		storageFiles := convertFiles(files)
-
-		// 检查缺失的文件
-		missingFiles, err := sm.storage.GetMissingFiles(storageFiles)
-		if err != nil {
-			lastErr = fmt.Errorf("无法检查缺失的文件: %w", err)
-			sm.logger.Error("检查缺失文件失败 (%d/5): %v", i+1, err)
-
-			// 等待一段时间再重试
-			if i < 4 { // 最后一次不需要等待
-				time.Sleep(time.Duration(i+1) * time.Second)
-			}
-			continue
-		}
-
-		// 下载缺失的文件 (限制并发数和启动间隔)
-		failedCount := sm.downloadMissingFiles(missingFiles)
-
-		if failedCount > 0 {
-			lastErr = fmt.Errorf("有 %d 个文件下载失败", failedCount)
-			sm.logger.Error("文件下载失败 (%d/5): %v", i+1, lastErr)
-
-			// 等待一段时间再重试
-			if i < 4 { // 最后一次不需要等待
-				time.Sleep(time.Duration(i+1) * time.Second)
-			}
-			continue
-		}
-
-		// 同步成功，重置错误计数
+	// 检查是否没有文件需要同步
+	if len(files) == 0 {
+		sm.logger.Info("没有文件需要同步")
 		sm.errorMgr.ResetErrors()
-		sm.logger.Info("文件同步完成，共处理 %d 个文件", len(files))
 		return nil
 	}
 
-	// 所有重试都失败了
-	sm.errorMgr.RecordError(lastErr)
-	return fmt.Errorf("文件同步失败，已重试5次: %w", lastErr)
+	// 转换文件格式
+	storageFiles := convertFiles(files)
+
+	// 获取缺失的文件
+	missingFiles, err := sm.storage.GetMissingFiles(storageFiles)
+	if err != nil {
+		return fmt.Errorf("无法检查缺失的文件: %w", err)
+	}
+
+	// 使用并行下载文件，控制并发度
+	failedCount := sm.syncFiles(missingFiles)
+
+	// 显示最终结果
+	sm.logger.Info("文件同步完成: 成功 %d, 失败 %d, 总计 %d",
+		len(missingFiles)-failedCount, failedCount, len(missingFiles))
+
+	if failedCount > 0 {
+		return fmt.Errorf("有 %d 个文件下载失败", failedCount)
+	}
+
+	// 同步成功，重置错误计数
+	sm.errorMgr.ResetErrors()
+	sm.logger.Info("文件同步完成，共处理 %d 个文件", len(files))
+	return nil
 }
 
-// downloadMissingFiles 下载缺失的文件，限制并发数和启动间隔
-func (sm *SyncManager) downloadMissingFiles(missingFiles []*storage.FileInfo) int {
+// syncFiles 并行下载缺失的文件
+func (sm *SyncManager) syncFiles(missingFiles []*storage.FileInfo) int {
 	maxConcurrent := sm.config.MaxConcurrency
 	startInterval := sm.config.StartIntervalMs
 
@@ -362,9 +402,9 @@ func (sm *SyncManager) downloadMissingFiles(missingFiles []*storage.FileInfo) in
 	totalFiles := len(missingFiles)
 
 	// 显示初始进度信息
-	sm.logger.Info("文件总数: 0/%d", totalFiles)
+	sm.logger.Info("开始同步文件，总数: %d", totalFiles)
 
-	// 下载每个缺失的文件
+	// 使用重试机制下载每个文件
 	for i, file := range missingFiles {
 		// 控制启动间隔
 		if i > 0 {
@@ -381,8 +421,9 @@ func (sm *SyncManager) downloadMissingFiles(missingFiles []*storage.FileInfo) in
 				// 增加已完成计数
 				current := atomic.AddInt64(&downloadedCount, 1)
 
-				// 更新总进度（使用\r实现原地更新）
-				sm.logger.Info("\r文件总数: %d/%d", current, totalFiles)
+				// 计算并显示进度
+				progress := float64(current) / float64(totalFiles) * 100
+				sm.logger.Info("\r同步进度: %d/%d (%.2f%%)\n", current, totalFiles, progress)
 
 				<-semaphore
 				wg.Done()
@@ -391,8 +432,8 @@ func (sm *SyncManager) downloadMissingFiles(missingFiles []*storage.FileInfo) in
 			// 获取信号量
 			semaphore <- struct{}{}
 
-			// 下载文件
-			if err := sm.downloadFile(f); err != nil {
+			// 下载文件，支持重试
+			if err := sm.downloadFileWithRetry(f); err != nil {
 				errChan <- err
 			}
 		}(file)
@@ -400,9 +441,6 @@ func (sm *SyncManager) downloadMissingFiles(missingFiles []*storage.FileInfo) in
 
 	// 等待所有下载完成
 	wg.Wait()
-
-	// 确保进度显示最终状态
-	sm.logger.Info("\r文件总数: %d/%d", totalFiles, totalFiles)
 
 	// 关闭错误通道
 	close(errChan)
@@ -413,30 +451,47 @@ func (sm *SyncManager) downloadMissingFiles(missingFiles []*storage.FileInfo) in
 		failedCount++
 	}
 
-	// 显示最终结果
-	sm.logger.Info("\n文件下载完成: 成功 %d, 失败 %d, 总计 %d",
-		totalFiles-failedCount, failedCount, totalFiles)
-
 	return failedCount
+}
+
+// downloadFileWithRetry 下载单个文件，支持重试机制
+func (sm *SyncManager) downloadFileWithRetry(file *storage.FileInfo) error {
+	var lastErr error
+	maxRetries := 3
+
+	for i := 0; i < maxRetries; i++ {
+		if err := sm.downloadFile(file); err != nil {
+			lastErr = err
+			sm.logger.Warn("下载文件 %s 失败 (%d/%d): %v", file.Hash, i+1, maxRetries, err)
+
+			// 等待一段时间再重试
+			if i < maxRetries-1 {
+				time.Sleep(time.Duration(i+1) * time.Second)
+			}
+			continue
+		}
+		return nil
+	}
+
+	return fmt.Errorf("下载文件 %s 失败，已重试%d次: %w", file.Hash, maxRetries, lastErr)
 }
 
 // downloadFile 下载单个文件
 func (sm *SyncManager) downloadFile(file *storage.FileInfo) error {
 	// 创建请求路径
-	path := fmt.Sprintf("openbmclapi/download/%s", file.Hash)
 
 	// 发送请求
-	resp, err := sm.doRequest("GET", path, nil)
+	resp, err := sm.doRequest("GET", file.Path[1:], nil)
 	if err != nil {
-		sm.errorMgr.RecordError(fmt.Errorf("无法下载文件: %w", err))
-		return fmt.Errorf("无法下载文件: %w", err)
+		sm.errorMgr.RecordError(fmt.Errorf("无法下载文件 %s: %w", file.Hash, err))
+		return fmt.Errorf("无法下载文件 %s: %w", file.Hash, err)
 	}
 	defer resp.Body.Close()
 
 	// 保存文件
 	if err := sm.storage.Put(file.Hash, resp.Body); err != nil {
-		sm.errorMgr.RecordError(fmt.Errorf("无法保存文件: %w", err))
-		return fmt.Errorf("无法保存文件: %w", err)
+		sm.errorMgr.RecordError(fmt.Errorf("无法保存文件 %s: %w", file.Hash, err))
+		return fmt.Errorf("无法保存文件 %s: %w", file.Hash, err)
 	}
 
 	// 操作成功，重置错误计数
