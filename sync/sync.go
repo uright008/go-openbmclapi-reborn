@@ -432,9 +432,14 @@ func (sm *SyncManager) syncFiles(missingFiles []*storage.FileInfo) int {
 				// 增加已完成计数
 				current := atomic.AddInt64(&downloadedCount, 1)
 
-				// 计算并显示进度
+				// 计算并显示进度（在同一行刷新）
 				progress := float64(current) / float64(totalFiles) * 100
-				sm.logger.Info("同步进度: %d/%d (%.2f%%)", current, totalFiles, progress)
+				fmt.Printf("\r[INFO] 同步进度: %d/%d (%.2f%%)", current, totalFiles, progress)
+
+				// 如果已完成所有文件，输出换行符
+				if current >= int64(totalFiles) {
+					fmt.Println()
+				}
 
 				// 确保从信号量中释放资源
 				select {
@@ -455,6 +460,7 @@ func (sm *SyncManager) syncFiles(missingFiles []*storage.FileInfo) int {
 	}
 
 	// 等待所有下载完成
+	wg.Wait()
 
 	// 关闭错误通道
 	close(errChan)

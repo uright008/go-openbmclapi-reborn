@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/studio-b12/gowebdav"
 	"github.com/uright008/go-openbmclapi-reborn/config"
@@ -42,13 +43,17 @@ func NewWebDAVStorage(cfg config.WebDAVConfig) *WebDAVStorage {
 // Init 初始化WebDAV存储
 func (w *WebDAVStorage) Init() error {
 	// 检查连接是否正常
-	err := w.client.Connect()
+	err := w.retryOnLock(func() error {
+		return w.client.Connect()
+	})
 	if err != nil {
 		return fmt.Errorf("无法连接到WebDAV服务器: %w", err)
 	}
 
 	// 确保基础目录存在
-	err = w.client.MkdirAll(w.path, 0755)
+	err = w.retryOnLock(func() error {
+		return w.client.MkdirAll(w.path, 0755)
+	})
 	if err != nil {
 		return fmt.Errorf("无法创建基础目录 %s: %w", w.path, err)
 	}
@@ -113,10 +118,13 @@ func (r *redirectReadCloser) Close() error {
 func (w *WebDAVStorage) Put(hash string, data io.Reader) error {
 	// 创建目录
 	dir := filepath.Join(w.path, hash[:2])
-	err := w.client.MkdirAll(dir, 0755)
+	err := w.retryOnLock(func() error {
+		return w.client.MkdirAll(dir, 0755)
+	})
 	if err != nil {
 		return fmt.Errorf("无法创建目录 %s: %w", dir, err)
 	}
+
 	// 读取数据
 	fileData, err := io.ReadAll(data)
 	if err != nil {
@@ -125,7 +133,9 @@ func (w *WebDAVStorage) Put(hash string, data io.Reader) error {
 
 	// 上传文件
 	filePath := strings.ReplaceAll(filepath.Join(dir, hash), "\\", "/")
-	err = w.client.Write(filePath, fileData, 0644)
+	err = w.retryOnLock(func() error {
+		return w.client.Write(filePath, fileData, 0644)
+	})
 	if err != nil {
 		return fmt.Errorf("无法写入文件 %s: %w", filePath, err)
 	}
@@ -135,18 +145,29 @@ func (w *WebDAVStorage) Put(hash string, data io.Reader) error {
 
 // Delete 删除文件
 func (w *WebDAVStorage) Delete(hash string) error {
+	// 构建文件路径
 	filePath := filepath.Join(w.path, hash[:2], hash)
-	err := w.client.Remove(filePath)
-	if err != nil {
-		return err
+
+	// 执行删除操作
+	err := w.retryOnLock(func() error {
+		return w.client.Remove(filePath)
+	})
+
+	// 如果是404错误（文件不存在），我们不返回错误
+	if err != nil && (strings.Contains(err.Error(), "404") || strings.Contains(err.Error(), "not found")) {
+		return nil
 	}
-	return nil
+
+	return err
 }
 
 // Exists 检查文件是否存在
 func (w *WebDAVStorage) Exists(hash string) (bool, error) {
 	filePath := filepath.Join(w.path, hash[:2], hash)
-	_, err := w.client.Stat(filePath)
+	err := w.retryOnLock(func() error {
+		_, err := w.client.Stat(filePath)
+		return err
+	})
 
 	if err != nil {
 		// 检查是否是文件不存在错误
@@ -159,19 +180,46 @@ func (w *WebDAVStorage) Exists(hash string) (bool, error) {
 	return true, nil
 }
 
+// retryOnLock 在遇到423锁定错误时重试操作
+func (w *WebDAVStorage) retryOnLock(operation func() error) error {
+	maxRetries := 5
+	for i := 0; i < maxRetries; i++ {
+		err := operation()
+		if err != nil {
+			// 检查是否是423锁定错误
+			if strings.Contains(err.Error(), "423") || strings.Contains(err.Error(), "Locked") {
+				// 如果不是最后一次重试，则等待1分钟后重试
+				if i < maxRetries-1 {
+					fmt.Printf("[INFO] 遇到423锁定错误，等待1分钟后重试 (%d/%d)\n", i+1, maxRetries-1)
+					time.Sleep(1 * time.Minute)
+					continue
+				}
+			}
+			// 如果不是423错误或已达到最大重试次数，则返回错误
+			return err
+		}
+		// 操作成功，返回nil
+		return nil
+	}
+	return nil
+}
+
 // WriteFile 写入文件
 func (w *WebDAVStorage) WriteFile(filePath string, content []byte, fileInfo *FileInfo) error {
 	fullPath := filepath.Join(w.path, filePath)
-	println("fullPath: ", fullPath)
 	// 确保目录存在
 	dir := filepath.Dir(fullPath)
-	err := w.client.MkdirAll(dir, 0755)
+	err := w.retryOnLock(func() error {
+		return w.client.MkdirAll(dir, 0755)
+	})
 	if err != nil {
 		return fmt.Errorf("无法创建目录: %w", err)
 	}
 
 	// 写入文件
-	err = w.client.Write(fullPath, content, 0644)
+	err = w.retryOnLock(func() error {
+		return w.client.Write(fullPath, content, 0644)
+	})
 	if err != nil {
 		return fmt.Errorf("无法写入文件 %s: %w", fullPath, err)
 	}
