@@ -17,13 +17,13 @@ byoc = false
 [storage]
 # Storage configuration
 type = "webdav"
-path = "./cache"
 
 # WebDAV storage configuration
 [storage.webdav]
 endpoint = "https://webdav.example.com/remote.php/webdav/"
 username = "your-username"
 password = "your-password"
+path = "/cache"
 
 [security]
 # SSL configuration (optional)
