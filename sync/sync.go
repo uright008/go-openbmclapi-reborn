@@ -33,25 +33,27 @@ type File struct {
 
 // SyncManager 管理文件同步
 type SyncManager struct {
-	storage   storage.Storage
-	tokenMgr  *token.TokenManager
-	client    *http.Client
-	serverURL string
-	logger    *logger.Logger
-	errorMgr  *ErrorRetryManager
-	config    *config.SyncConfig
+	storage     storage.Storage
+	tokenMgr    *token.TokenManager
+	client      *http.Client
+	serverURL   string
+	logger      *logger.Logger
+	errorMgr    *ErrorRetryManager
+	config      *config.SyncConfig
+	debugConfig *config.DebugConfig
 }
 
 // NewSyncManager 创建新的同步管理器
-func NewSyncManager(storage storage.Storage, tokenMgr *token.TokenManager, logger *logger.Logger, syncConfig *config.SyncConfig) *SyncManager {
+func NewSyncManager(storage storage.Storage, tokenMgr *token.TokenManager, logger *logger.Logger, syncConfig *config.SyncConfig, debugConfig *config.DebugConfig) *SyncManager {
 	return &SyncManager{
-		storage:   storage,
-		tokenMgr:  tokenMgr,
-		client:    &http.Client{Timeout: 30 * time.Second},
-		serverURL: "https://openbmclapi.bangbang93.com",
-		logger:    logger,
-		errorMgr:  NewErrorRetryManager(5, logger),
-		config:    syncConfig,
+		storage:     storage,
+		tokenMgr:    tokenMgr,
+		client:      &http.Client{Timeout: 30 * time.Second},
+		serverURL:   "https://openbmclapi.bangbang93.com",
+		logger:      logger,
+		errorMgr:    NewErrorRetryManager(5, logger),
+		config:      syncConfig,
+		debugConfig: debugConfig,
 	}
 }
 
@@ -214,6 +216,11 @@ func (sm *SyncManager) GetFileList() ([]*File, error) {
 
 // saveDecompressedData 将解压后的数据保存到本地文件
 func (sm *SyncManager) saveDecompressedData(data []byte) {
+	// 检查是否启用保存下载列表功能
+	if !sm.debugConfig.SaveDownloadList {
+		return
+	}
+
 	filename := "filelist_decompressed.dat"
 	err := os.WriteFile(filename, data, 0644)
 	if err != nil {
@@ -225,6 +232,11 @@ func (sm *SyncManager) saveDecompressedData(data []byte) {
 
 // saveFileListAsJSON 将文件列表保存为JSON格式
 func (sm *SyncManager) saveFileListAsJSON(files []*File) {
+	// 检查是否启用保存下载列表功能
+	if !sm.debugConfig.SaveDownloadList {
+		return
+	}
+
 	filename := "filelist.json"
 
 	// 转换为可JSON序列化的结构
@@ -300,31 +312,17 @@ func convertBytesToFiles(data []byte) ([]*File, error) {
 	var files []*File
 	for _, record := range records {
 		// 类型断言为map
-		recordMap, ok := record.(map[string]interface{})
+		fields, ok := record.(map[string]interface{})
 		if !ok {
-			continue
+			return nil, fmt.Errorf("记录不是预期的映射类型")
 		}
 
-		file := &File{}
-
-		if path, ok := recordMap["path"].(string); ok {
-			file.Path = path
-		}
-
-		if hash, ok := recordMap["hash"].(string); ok {
-			file.Hash = hash
-		}
-
-		if size, ok := recordMap["size"].(int64); ok {
-			file.Size = size
-		} else if size, ok := recordMap["size"].(int32); ok {
-			file.Size = int64(size)
-		}
-
-		if mtime, ok := recordMap["mtime"].(int64); ok {
-			file.MTime = mtime
-		} else if mtime, ok := recordMap["mtime"].(int32); ok {
-			file.MTime = int64(mtime)
+		// 创建文件对象
+		file := &File{
+			Path:  fields["path"].(string),
+			Hash:  fields["hash"].(string),
+			Size:  fields["size"].(int64),
+			MTime: fields["mtime"].(int64),
 		}
 
 		files = append(files, file)

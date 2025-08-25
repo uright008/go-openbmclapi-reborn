@@ -54,7 +54,7 @@ func NewCluster(cfg *config.Config, logger *logger.Logger) (*Cluster, error) {
 	tokenMgr := token.NewTokenManager(cfg.Cluster.ID, cfg.Cluster.Secret, serverURL)
 
 	// 创建同步管理器
-	syncMgr := sync.NewSyncManager(store, tokenMgr, logger, &cfg.Sync)
+	syncMgr := sync.NewSyncManager(store, tokenMgr, logger, &cfg.Sync, &cfg.Debug)
 
 	// 创建错误重试管理器
 	errorMgr := NewErrorRetryManager(5, logger)

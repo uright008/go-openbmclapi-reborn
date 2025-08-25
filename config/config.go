@@ -45,6 +45,11 @@ type FeaturesConfig struct {
 	EnableUPNP       bool `toml:"enable_upnp"`
 }
 
+// DebugConfig 调试配置
+type DebugConfig struct {
+	SaveDownloadList bool `toml:"save_download_list"`
+}
+
 // SystemConfig 系统配置
 type SystemConfig struct {
 	Timezone string `toml:"timezone"`
@@ -68,6 +73,7 @@ type Config struct {
 	Storage  StorageConfig  `toml:"storage"`
 	Security SecurityConfig `toml:"security"`
 	Features FeaturesConfig `toml:"features"`
+	Debug    DebugConfig    `toml:"debug"`
 	System   SystemConfig   `toml:"system"`
 	Log      LogConfig      `toml:"log"`
 	Sync     SyncConfig     `toml:"sync"`
@@ -134,6 +140,9 @@ func createDefaultConfig(filename string) error {
 			EnableNginx:      false,
 			DisableAccessLog: false,
 			EnableUPNP:       false,
+		},
+		Debug: DebugConfig{
+			SaveDownloadList: false,
 		},
 		System: SystemConfig{
 			Timezone: "Asia/Shanghai",

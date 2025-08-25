@@ -117,7 +117,6 @@ func (w *WebDAVStorage) Put(hash string, data io.Reader) error {
 	if err != nil {
 		return fmt.Errorf("无法创建目录 %s: %w", dir, err)
 	}
-
 	// 读取数据
 	fileData, err := io.ReadAll(data)
 	if err != nil {
@@ -125,7 +124,7 @@ func (w *WebDAVStorage) Put(hash string, data io.Reader) error {
 	}
 
 	// 上传文件
-	filePath := filepath.Join(dir, hash)
+	filePath := strings.ReplaceAll(filepath.Join(dir, hash), "\\", "/")
 	err = w.client.Write(filePath, fileData, 0644)
 	if err != nil {
 		return fmt.Errorf("无法写入文件 %s: %w", filePath, err)
@@ -163,7 +162,7 @@ func (w *WebDAVStorage) Exists(hash string) (bool, error) {
 // WriteFile 写入文件
 func (w *WebDAVStorage) WriteFile(filePath string, content []byte, fileInfo *FileInfo) error {
 	fullPath := filepath.Join(w.path, filePath)
-
+	println("fullPath: ", fullPath)
 	// 确保目录存在
 	dir := filepath.Dir(fullPath)
 	err := w.client.MkdirAll(dir, 0755)
@@ -174,9 +173,8 @@ func (w *WebDAVStorage) WriteFile(filePath string, content []byte, fileInfo *Fil
 	// 写入文件
 	err = w.client.Write(fullPath, content, 0644)
 	if err != nil {
-		return fmt.Errorf("无法写入文件 %s: %w", filePath, err)
+		return fmt.Errorf("无法写入文件 %s: %w", fullPath, err)
 	}
-
 	return nil
 }
 
@@ -214,15 +212,20 @@ func (w *WebDAVStorage) walkDir(basePath, relPath string, files *[]*FileInfo) er
 		} else {
 			// 处理文件
 			// 验证是否符合我们的存储结构（两级目录结构）
-			if len(entryRelPath) >= 3 && entryRelPath[2] == filepath.Separator {
-				// 提取文件名（hash）
-				hash := entryRelPath[0:2] + entryRelPath[3:]
-				fileInfo := &FileInfo{
-					Hash: hash,
-					Size: entry.Size(),
-					Path: filepath.Join(basePath, entryRelPath),
+			// 检查路径是否至少有3个字符（两级目录）并且第三个字符是路径分隔符
+			if len(entryRelPath) >= 3 {
+				// 检查是否符合两级目录结构（例如 "ab/cdefghijk..."）
+				parts := strings.Split(filepath.ToSlash(entryRelPath), "/")
+				if len(parts) >= 2 && len(parts[0]) == 2 {
+					// 提取文件名（hash）
+					hash := strings.ReplaceAll(entryRelPath, string(filepath.Separator), "")[2:]
+					fileInfo := &FileInfo{
+						Hash: hash,
+						Size: entry.Size(),
+						Path: filepath.Join(basePath, entryRelPath),
+					}
+					*files = append(*files, fileInfo)
 				}
-				*files = append(*files, fileInfo)
 			}
 		}
 	}
