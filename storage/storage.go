@@ -56,6 +56,8 @@ func NewStorage(cfg *config.Config) (Storage, error) {
 		return NewFileStorage(cfg.Storage.Path), nil
 	case "webdav":
 		return NewWebDAVStorage(cfg.Storage.WebDAV), nil
+	case "alist":
+		return NewAListStorage(cfg.Storage.AList), nil
 	default:
 		return nil, fmt.Errorf("不支持的存储类型: %s", cfg.Storage.Type)
 	}

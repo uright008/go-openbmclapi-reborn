@@ -1,0 +1,69 @@
+# AList 存储配置示例文件
+# 将此文件重命名为 config.toml 并根据实际情况修改配置
+
+[cluster]
+# 集群ID (从BMCLAPI控制台获取)
+id = "your_cluster_id"
+# 集群密钥 (从BMCLAPI控制台获取)
+secret = "your_cluster_secret"
+# 集群绑定的IP地址
+ip = "0.0.0.0"
+# 集群监听端口
+port = 4000
+# 集群对外暴露的端口 (如果使用NAT或反向代理)
+public_port = 0
+# 是否为自带集群 (BYOC)
+byoc = false
+
+[storage]
+# 存储类型: file, webdav, alist
+type = "alist"
+# 本地缓存路径 (当使用webdav或alist时，某些功能可能仍需要本地存储)
+path = "./cache"
+
+  # AList 存储配置
+  [storage.alist]
+  # AList 服务器地址
+  endpoint = "http://localhost:5244"
+  # AList 用户名
+  username = "admin"
+  # AList 密码
+  password = "admin"
+  # AList 存储路径
+  path = "/data"
+  # 可选: 直接提供认证token，如果提供则不会使用用户名/密码登录
+  token = ""
+
+[security]
+# SSL私钥路径 (如果使用HTTPS)
+ssl_key = ""
+# SSL证书路径 (如果使用HTTPS)
+ssl_cert = ""
+
+[features]
+# 是否启用Nginx优化
+enable_nginx = false
+# 是否禁用访问日志
+disable_access_log = false
+# 是否启用UPnP端口映射
+enable_upnp = false
+
+[debug]
+# 是否保存下载列表到文件供调试
+save_download_list = false
+
+[system]
+# 时区设置
+timezone = "Asia/Shanghai"
+
+[log]
+# 日志级别: debug, info, warn, error
+level = "info"
+# 日志格式: text, json
+format = "text"
+
+[sync]
+# 最大并发下载数
+max_concurrency = 64
+# 下载启动间隔(毫秒)
+start_interval_ms = 100

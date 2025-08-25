@@ -15,6 +15,7 @@ type ClusterConfig struct {
 	Port       int    `toml:"port"`
 	PublicPort int    `toml:"public_port"`
 	BYOC       bool   `toml:"byoc"`
+	ServerURL  string `toml:"server_url"` // 新增服务器URL配置
 }
 
 // StorageConfig 存储配置
@@ -22,6 +23,7 @@ type StorageConfig struct {
 	Type   string       `toml:"type"`
 	Path   string       `toml:"path"`
 	WebDAV WebDAVConfig `toml:"webdav"`
+	AList  AListConfig  `toml:"alist"`
 }
 
 // WebDAVConfig WebDAV配置
@@ -30,6 +32,15 @@ type WebDAVConfig struct {
 	Username string `toml:"username"`
 	Password string `toml:"password"`
 	Path     string `toml:"path"`
+}
+
+// AListConfig AList配置
+type AListConfig struct {
+	Endpoint string `toml:"endpoint"`
+	Username string `toml:"username"`
+	Password string `toml:"password"`
+	Path     string `toml:"path"`
+	Token    string `toml:"token"`
 }
 
 // SecurityConfig 安全配置
@@ -57,8 +68,9 @@ type SystemConfig struct {
 
 // LogConfig 日志配置
 type LogConfig struct {
-	Level  string `toml:"level"`
-	Format string `toml:"format"`
+	Level    string `toml:"level"`
+	Format   string `toml:"format"`
+	Encoding string `toml:"encoding"` // 新增编码配置
 }
 
 // SyncConfig 同步配置
@@ -121,6 +133,7 @@ func createDefaultConfig(filename string) error {
 			Port:       4000,
 			PublicPort: 0,
 			BYOC:       false,
+			ServerURL:  "https://openbmclapi.bangbang93.com", // 添加默认服务器URL
 		},
 		Storage: StorageConfig{
 			Type: "file",
@@ -130,6 +143,14 @@ func createDefaultConfig(filename string) error {
 				Endpoint: "https://example.com/webdav", // WebDAV服务器地址
 				Username: "username",                   // WebDAV用户名
 				Password: "password",                   // WebDAV密码
+				Path:     "/webdav",                    // WebDAV路径
+			},
+			AList: AListConfig{
+				// 示例配置，根据实际情况修改
+				Endpoint: "http://localhost:5244", // AList服务器地址
+				Username: "admin",                 // AList用户名
+				Password: "admin",                 // AList密码
+				Path:     "/data",                 // AList存储路径
 			},
 		},
 		Security: SecurityConfig{
@@ -148,8 +169,9 @@ func createDefaultConfig(filename string) error {
 			Timezone: "Asia/Shanghai",
 		},
 		Log: LogConfig{
-			Level:  "info",
-			Format: "text",
+			Level:    "info",
+			Format:   "text",
+			Encoding: "utf-8", // 添加默认编码
 		},
 		Sync: SyncConfig{
 			MaxConcurrency:  64,
@@ -173,12 +195,13 @@ func createDefaultConfig(filename string) error {
 
 // setDefaults 设置配置默认值
 func setDefaults(config *Config) {
-	if config.Cluster.Port == 0 {
-		config.Cluster.Port = 4000
-	}
 
 	if config.Cluster.PublicPort == 0 {
 		config.Cluster.PublicPort = config.Cluster.Port
+	}
+
+	if config.Cluster.ServerURL == "" {
+		config.Cluster.ServerURL = "https://openbmclapi.bangbang93.com"
 	}
 
 	if config.Storage.Path == "" {
@@ -188,6 +211,21 @@ func setDefaults(config *Config) {
 	if config.Storage.WebDAV.Endpoint == "" {
 		// 如果没有设置WebDAV端点，则使用集群ID作为默认值
 		config.Storage.WebDAV.Endpoint = fmt.Sprintf("https://%s.openbmclapi.com/webdav", config.Cluster.ID)
+	}
+
+	if config.Storage.AList.Endpoint == "" {
+		// 如果没有设置AList端点，则使用集群ID作为默认值
+		config.Storage.AList.Endpoint = fmt.Sprintf("https://%s.openbmclapi.com/alist", config.Cluster.ID)
+	}
+
+	if config.Storage.AList.Username == "" {
+		// 如果没有设置AList用户名，则使用默认用户名
+		config.Storage.AList.Username = "admin"
+	}
+
+	if config.Storage.AList.Path == "" {
+		// 如果没有设置AList路径，则使用默认路径
+		config.Storage.AList.Path = "/data"
 	}
 
 	if config.System.Timezone == "" {
@@ -200,6 +238,11 @@ func setDefaults(config *Config) {
 
 	if config.Log.Format == "" {
 		config.Log.Format = "text"
+	}
+
+	// 设置日志编码默认值
+	if config.Log.Encoding == "" {
+		config.Log.Encoding = "utf-8"
 	}
 
 	// 设置同步配置默认值
